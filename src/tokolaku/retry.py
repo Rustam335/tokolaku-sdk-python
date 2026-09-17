@@ -34,9 +34,14 @@ def should_retry(policy: RetryPolicy, error: TokolakuAPIError) -> bool:
     return False
 
 
+# Cap Retry-After: server (atau proxy nakal) yang mengirim nilai raksasa
+# (mis. 86400) tidak boleh membuat klien tidur berjam-jam.
+RETRY_AFTER_CAP_SEC = 30
+
+
 def retry_delay_ms(attempt: int, retry_after_sec: int | None) -> int:
-    """Exponential backoff + full jitter, base 250ms cap 1s; Retry-After menang."""
+    """Exponential backoff + full jitter, base 250ms cap 1s; Retry-After menang (di-cap RETRY_AFTER_CAP_SEC)."""
     if retry_after_sec is not None:
-        return max(0, retry_after_sec * 1000)
+        return max(0, min(retry_after_sec, RETRY_AFTER_CAP_SEC) * 1000)
     cap = min(1000, 250 * 2**attempt)
     return round(cap * (0.5 + random.random() * 0.5))

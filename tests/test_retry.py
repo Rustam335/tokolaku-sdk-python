@@ -73,3 +73,11 @@ def test_retry_after_none_pakai_backoff_jitter_dalam_batas():
 def test_retry_delay_cap_1000ms_pada_attempt_besar():
     d = retry_delay_ms(10, None)
     assert d <= 1000
+
+
+def test_retry_after_capped_at_30s():
+    assert retry_delay_ms(0, 86400) == 30_000
+    assert retry_delay_ms(0, 31) == 30_000
+    assert retry_delay_ms(0, 30) == 30_000
+    assert retry_delay_ms(0, 29) == 29_000
+    assert retry_delay_ms(0, -5) == 0
