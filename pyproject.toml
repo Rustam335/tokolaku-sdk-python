@@ -33,3 +33,6 @@ Repository = "https://github.com/Rustam335/tokolaku-sdk-python"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tokolaku"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "tests", "README.md", "LICENSE", "pyproject.toml"]

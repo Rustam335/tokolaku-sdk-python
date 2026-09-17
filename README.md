@@ -64,6 +64,7 @@ Every failed request raises an instance of `TokolakuAPIError` (or one of its sub
 | `TokolakuWebhookSignatureError` | — | Webhook signature missing or invalid (does **not** extend `TokolakuAPIError`) |
 
 ```python
+import os
 from tokolaku import (
     Tokolaku,
     TokolakuAPIError,
@@ -97,7 +98,7 @@ The SDK retries automatically (`max_retries`, default `2`) using exponential bac
 | `2xx` where the body stream fails mid-read (`code: "response_read_error"`) | **Not** retried | **Not** retried |
 
 - `bot_reply` has no side effect if it fails, so it retries on `429`, any `5xx`, and network errors.
-- **`messages.send` is NOT retried on timeout/5xx because the message may already have been sent** and charged even though the client never saw a successful response, and the API does not yet expose an idempotency key. It only retries on `429` and network errors — a network retry only applies when the request itself failed before any response headers arrived (no response headers were ever received, so nothing could have been sent). Once response headers have arrived, a failure reading the body is a `response_read_error`, not a network error, and is never retried.
+- **`messages.send` is NOT retried on timeout/5xx because the message may already have been sent** and charged even though the client never saw a successful response, and the API does not yet expose an idempotency key. It only retries on `429` and network errors — a network retry only applies when the request itself failed before any response headers arrived (no response headers were ever received, so the send most likely never reached the server). Once response headers have arrived, a failure reading the body is a `response_read_error`, not a network error, and is never retried.
 - A timeout (`code: "timeout"`) is never retried on either endpoint, since it's ambiguous whether the server received/processed the request.
 - A `2xx` response with a body that fails to parse as JSON (`code: "invalid_response"`) carries the actual 2xx status the server returned (usually `200`) and is never retried on either endpoint — the request already reached the server and had its side effect (reply generated / message sent and charged); retrying would risk a double-send or burning AI quota for nothing.
 - A `2xx` response whose body stream errors mid-read (`code: "response_read_error"`, e.g. the connection resets after headers arrive) is likewise never retried, for the same reason: response headers arriving means the request already reached the server and may have had its side effect, even though the body was never fully read.
