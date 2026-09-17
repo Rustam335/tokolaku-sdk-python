@@ -67,9 +67,13 @@ def map_response_error(status: int, body_text: str) -> TokolakuAPIError:
     try:
         parsed = json.loads(body_text)
         error = parsed.get("error") if isinstance(parsed, dict) else None
-        if error:
-            code = error.get("code")
-            message = error.get("message") or message
+        if error and isinstance(error, dict):
+            code_val = error.get("code")
+            if code_val is not None:
+                code = code_val
+            msg_val = error.get("message")
+            if msg_val is not None:
+                message = msg_val
     except (json.JSONDecodeError, ValueError):
         pass  # non-JSON — pakai default
 

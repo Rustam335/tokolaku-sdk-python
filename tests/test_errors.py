@@ -83,6 +83,19 @@ def test_webhook_signature_error_custom_message():
     assert str(e) == "custom"
 
 
+def test_envelope_error_non_dict_degrades_gracefully():
+    e = map_response_error(500, '{"error": "boom"}')
+    assert type(e) is TokolakuAPIError
+    assert e.code is None
+    assert e.status == 500
+
+
+def test_envelope_message_empty_string_dipertahankan():
+    e = map_response_error(400, '{"error": {"code": "x", "message": ""}}')
+    assert e.code == "x"
+    assert str(e) == ""
+
+
 @pytest.mark.parametrize(
     ("status", "cls"),
     [
