@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -82,8 +83,15 @@ class Tokolaku:
             "authorization": f"Bearer {self._api_key}",
             "content-type": "application/json",
         }
+        request = self._http_client.build_request(
+            "POST", url, headers=headers, json=body, timeout=self._timeout
+        )
+
+        # Fase 1 — kirim request & baca header/status. httpx men-stream di sini
+        # (stream=True) sehingga kegagalan SETELAH header diterima TIDAK muncul
+        # sebagai exception di titik ini (lihat fase 2).
         try:
-            response = self._http_client.post(url, headers=headers, json=body, timeout=self._timeout)
+            response = self._http_client.send(request, stream=True)
         except httpx.TimeoutException as e:
             raise TokolakuAPIError(
                 f"Timeout setelah {int(self._timeout * 1000)}ms", status=None, code="timeout"
@@ -91,20 +99,32 @@ class Tokolaku:
         except httpx.RequestError as e:
             raise TokolakuAPIError(f"Network error: {e}", status=None, code="network_error") from e
 
+        # Fase 2 — header sudah tiba: request SAMPAI server, efek samping mungkin
+        # sudah terjadi (mis. pesan terkirim & tercharge, reply AI dihasilkan) →
+        # kegagalan baca body TIDAK boleh jadi network_error (celah double-send).
         try:
-            text = response.text
-        except Exception as e:
-            # Header respons SUDAH diterima (request sampai server, efek samping —
-            # mis. pesan terkirim & tercharge, reply AI dihasilkan — mungkin sudah
-            # terjadi) tapi baca body gagal. BUKAN network error & TIDAK boleh
-            # di-retry (lihat should_retry: sejajar dengan invalid_response).
-            raise TokolakuAPIError(
-                "Gagal membaca body respons", status=response.status_code, code="response_read_error"
-            ) from e
+            try:
+                response.read()
+            except httpx.TimeoutException as e:
+                raise TokolakuAPIError(
+                    f"Timeout setelah {int(self._timeout * 1000)}ms", status=None, code="timeout"
+                ) from e
+            except Exception as e:
+                raise TokolakuAPIError(
+                    "Gagal membaca body respons",
+                    status=response.status_code,
+                    code="response_read_error",
+                ) from e
+        finally:
+            response.close()
+
+        text = response.text
 
         if not (200 <= response.status_code < 300):
             ra_header = response.headers.get("retry-after")
-            retry_after_sec = int(ra_header) if ra_header is not None and ra_header.isdigit() else None
+            retry_after_sec = (
+                int(ra_header) if ra_header is not None and re.fullmatch(r"\d+", ra_header) else None
+            )
             err = map_response_error(response.status_code, text)
             err.retry_after_sec = retry_after_sec  # type: ignore[attr-defined]
             raise err

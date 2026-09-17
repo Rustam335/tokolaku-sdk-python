@@ -5,6 +5,7 @@ Nol network: seluruh request lewat httpx.MockTransport (injeksi http_client).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import httpx
@@ -139,3 +140,10 @@ def test_base_url_custom_dipakai():
 def test_konstruktor_tanpa_api_key_raises_validation_error():
     with pytest.raises(TokolakuValidationError):
         Tokolaku()
+
+
+def test_bot_reply_result_frozen_dataclass_tidak_bisa_diubah():
+    tk, _calls = make_client([(200, {"reply": "Halo!", "parts": ["Halo!"]})])
+    res = tk.bot_reply(message="halo")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        res.reply = "diubah paksa"  # type: ignore[misc]

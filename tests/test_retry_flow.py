@@ -19,6 +19,19 @@ def _no_real_sleep(monkeypatch):
     monkeypatch.setattr("tokolaku.client.time.sleep", lambda _seconds: None)
 
 
+class _RaisingStream(httpx.SyncByteStream):
+    """Stream yang yield sebagian body lalu raise httpx.ReadError — simulasi
+    koneksi terputus SETELAH header respons sudah diterima (mid-body failure).
+    """
+
+    def __iter__(self):
+        yield b'{"reply": "seba'
+        raise httpx.ReadError("connection reset mid-body")
+
+    def close(self) -> None:
+        pass
+
+
 def seq_client(steps, **kwargs):
     """steps: list of "network" | "timeout" | (status, body_dict|raw_str)."""
     calls: list[httpx.Request] = []
@@ -123,3 +136,61 @@ def test_body_2xx_json_rusak_tidak_di_retry_kedua_endpoint_invalid_response():
     assert exc2.value.code == "invalid_response"
     assert exc2.value.status == 200
     assert len(calls2) == 1
+
+
+def _mid_body_failure_client(**kwargs):
+    """Client yang SELALU balas header 200 lalu putus koneksi di tengah body —
+    dipakai untuk kedua endpoint karena kegagalannya terjadi sebelum body
+    di-parse (sebelum tahu endpoint mana yang dipanggil)."""
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, stream=_RaisingStream(), request=request)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    max_retries = kwargs.pop("max_retries", 2)
+    tk = Tokolaku(api_key="k", http_client=http_client, max_retries=max_retries, **kwargs)
+    return tk, calls
+
+
+def test_mid_body_failure_bot_reply_1_panggilan_response_read_error():
+    """Header 200 sudah diterima, request SAMPAI server (efek samping mungkin
+    sudah terjadi) — kegagalan baca body TIDAK BOLEH jadi network_error yang
+    di-retry (celah double-send)."""
+    tk, calls = _mid_body_failure_client()
+    with pytest.raises(TokolakuAPIError) as exc:
+        tk.bot_reply(message="hai")
+    assert exc.value.code == "response_read_error"
+    assert exc.value.status == 200
+    assert len(calls) == 1
+
+
+def test_mid_body_failure_messages_send_1_panggilan_response_read_error():
+    tk, calls = _mid_body_failure_client()
+    with pytest.raises(TokolakuAPIError) as exc:
+        tk.messages.send(to="628", text="hai")
+    assert exc.value.code == "response_read_error"
+    assert exc.value.status == 200
+    assert len(calls) == 1
+
+
+def test_retry_after_header_malformed_unicode_digit_tidak_crash():
+    """`"²".isdigit()` True di Python tapi `int("²")` raise ValueError — header
+    Retry-After semacam ini harus di-treat sebagai "tidak ada" (fallback ke
+    backoff jitter), bukan meng-crash request dengan ValueError yang tidak
+    tertangkap."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Header dikirim sbg raw bytes (spt di wire) supaya lolos httpx ascii-encode
+        # guard di sisi konstruksi — "²" (U+00B2, superscript two, non-ASCII).
+        return httpx.Response(
+            429,
+            headers=[(b"retry-after", "²".encode("latin-1"))],
+            json={"error": {"code": "rate_limited", "message": "pelan-pelan"}},
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    tk = Tokolaku(api_key="k", http_client=http_client, max_retries=0)
+    with pytest.raises(TokolakuRateLimitError):
+        tk.bot_reply(message="hai")
